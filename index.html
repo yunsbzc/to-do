@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>To Do</title>
+  <meta name="theme-color" content="#faf8f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#131412" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%232f5d46'/><path d='m30 52 14 14 27-33' fill='none' stroke='%23faf8f3' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page">
+    <main id="view"></main>
+
+    <footer>
+      <p>Saved in this browser only.</p>
+      <p>
+        <button type="button" class="text-button" id="export">Download a backup</button>
+        <span aria-hidden="true">·</span>
+        <button type="button" class="text-button" id="import">Restore from backup</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+      </p>
+    </footer>
+  </div>
+
+  <button type="button" class="fab" id="add" aria-label="Add" title="Add (N)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+  <dialog id="sheet" aria-labelledby="sheet-title">
+    <form id="sheet-form" autocomplete="off">
+      <h2 id="sheet-title">New to-do</h2>
+
+      <label class="field">
+        <span>Title</span>
+        <input type="text" id="f-title" required maxlength="200">
+      </label>
+
+      <fieldset class="field-set">
+        <legend>Kind</legend>
+        <div class="kind-chips" id="f-kind"></div>
+      </fieldset>
+
+      <label class="field" id="row-note">
+        <span>Note <em>optional</em></span>
+        <input type="text" id="f-note" maxlength="200" placeholder="An author, a link, who recommended it">
+      </label>
+
+      <label class="field">
+        <span id="due-label">Due date <em>optional</em></span>
+        <input type="date" id="f-due">
+      </label>
+
+      <fieldset class="seg" id="row-state">
+        <legend>Status</legend>
+        <div>
+          <label><input type="radio" name="state" value="open"><span>Not started</span></label>
+          <label><input type="radio" name="state" value="doing"><span>In progress</span></label>
+          <label><input type="radio" name="state" value="done"><span>Done</span></label>
+        </div>
+      </fieldset>
+
+      <label class="toggle" id="row-next">
+        <input type="checkbox" id="f-next">
+        <span>Show in Next up</span>
+      </label>
+
+      <div class="sheet-actions">
+        <button type="button" class="text-button" id="sheet-delete">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="sheet-cancel">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="list-sheet" aria-labelledby="list-sheet-title">
+    <form id="list-form" autocomplete="off">
+      <h2 id="list-sheet-title">New list</h2>
+      <label class="field">
+        <span>Name</span>
+        <input type="text" id="f-list-name" required maxlength="40" placeholder="Places to go, recipes to try…">
+      </label>
+      <div class="sheet-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="list-cancel">Cancel</button>
+        <button type="submit" class="btn" id="list-submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <span id="toast-text"></span>
+    <button type="button" id="toast-undo">Undo</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
