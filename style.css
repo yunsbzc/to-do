@@ -756,6 +756,12 @@ dialog h2 {
   border-color: var(--accent);
 }
 
+.sheet-note {
+  margin: 0 0 var(--space-4);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 .sheet-actions {
   display: flex;
   align-items: center;

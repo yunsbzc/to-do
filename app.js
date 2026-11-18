@@ -30,18 +30,21 @@
 
     const kinds = DEFAULT_KINDS.map((k) => {
       const saved = arr(data.kinds).find((x) => x && x.id === k.id);
-      return { id: k.id, name: str(saved && saved.name).trim() || k.name };
+      return { id: k.id, name: str(saved && saved.name).trim() || k.name, updatedAt: num(saved && saved.updatedAt) ?? 0 };
     });
     for (const k of arr(data.kinds)) {
       const id = str(k && k.id);
       const name = str(k && k.name).trim();
-      if (id && name && id !== COUNTDOWN && !kinds.some((x) => x.id === id)) kinds.push({ id, name });
+      if (id && name && id !== COUNTDOWN && !kinds.some((x) => x.id === id)) {
+        kinds.push({ id, name, updatedAt: num(k.updatedAt) ?? 0 });
+      }
     }
 
     const items = arr(data.items)
       .filter((i) => i && str(i.title).trim())
       .map((i) => {
         const state = STATES.includes(i.state) ? i.state : 'open';
+        const createdAt = num(i.createdAt) ?? Date.now();
         return {
           id: str(i.id) || uid(),
           kind: kinds.some((k) => k.id === i.kind) ? i.kind : 'do',
@@ -50,16 +53,23 @@
           due: parseDate(str(i.due)) ? i.due : '',
           state,
           next: state !== 'done' && !!i.next,
-          createdAt: num(i.createdAt) ?? Date.now(),
+          createdAt,
           doneAt: state === 'done' ? num(i.doneAt) ?? Date.now() : null,
+          updatedAt: num(i.updatedAt) ?? createdAt,
         };
       });
 
     const countdowns = arr(data.countdowns)
       .filter((c) => c && str(c.name).trim() && parseDate(str(c.date)))
-      .map((c) => ({ id: str(c.id) || uid(), name: str(c.name).trim(), date: c.date }));
+      .map((c) => ({ id: str(c.id) || uid(), name: str(c.name).trim(), date: c.date, updatedAt: num(c.updatedAt) ?? 0 }));
 
-    return { kinds, items, countdowns };
+    // When each deleted thing was deleted, so a deletion on one device wins over an older copy on another.
+    const deleted = {};
+    if (data.deleted && typeof data.deleted === 'object') {
+      for (const [key, at] of Object.entries(data.deleted)) if (num(at) !== null) deleted[key] = at;
+    }
+
+    return { kinds, items, countdowns, deleted };
   }
 
   // Carries over anything saved by the first version of this page.
@@ -91,7 +101,7 @@
     return normalize(null);
   }
 
-  function save() {
+  function persist() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
@@ -99,7 +109,66 @@
     }
   }
 
+  // ---------- change tracking (what makes syncing between devices merge cleanly) ----------
+
+  const COLLECTIONS = ['kinds', 'items', 'countdowns'];
+  let snapshot = new Map(); // "collection:id" -> contents as last saved
+
+  const fingerprint = ({ updatedAt, ...rest }) => JSON.stringify(rest);
+
+  function takeSnapshot() {
+    snapshot = new Map();
+    for (const col of COLLECTIONS) for (const e of state[col]) snapshot.set(`${col}:${e.id}`, fingerprint(e));
+  }
+
+  // Compares with the last save: anything new or changed gets the current time, anything gone gets a deletion marker.
+  function stamp() {
+    const now = Date.now();
+    const seen = new Set();
+    for (const col of COLLECTIONS) {
+      for (const e of state[col]) {
+        const key = `${col}:${e.id}`;
+        seen.add(key);
+        if (snapshot.get(key) !== fingerprint(e)) {
+          e.updatedAt = now;
+          delete state.deleted[key];
+        }
+      }
+    }
+    for (const key of snapshot.keys()) if (!seen.has(key)) state.deleted[key] = now;
+    takeSnapshot();
+  }
+
+  // Combines two copies: for each thing the newest version wins, unless it was deleted after that.
+  function merge(a, b) {
+    const deleted = { ...a.deleted };
+    for (const [key, at] of Object.entries(b.deleted)) deleted[key] = Math.max(deleted[key] || 0, at);
+    const out = { deleted };
+    for (const col of COLLECTIONS) {
+      const byId = new Map();
+      for (const e of [...a[col], ...b[col]]) {
+        const current = byId.get(e.id);
+        if (!current || e.updatedAt > current.updatedAt) byId.set(e.id, e);
+      }
+      out[col] = [...byId.values()].filter((e) => {
+        const key = `${col}:${e.id}`;
+        if (deleted[key] >= e.updatedAt) return false;
+        delete deleted[key]; // changed again after it was deleted elsewhere: it stays
+        return true;
+      });
+    }
+    out.items.sort((x, y) => y.createdAt - x.createdAt);
+    return normalize(JSON.parse(JSON.stringify(out)));
+  }
+
+  function save() {
+    stamp();
+    persist();
+    scheduleSync();
+  }
+
   let state = load();
+  takeSnapshot();
   let doneFilter = 'all';
   const completing = new Set(); // ids of to-dos mid-way through the completion animation
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -717,6 +786,7 @@
   }
 
   window.addEventListener('hashchange', () => {
+    finishSignIn(); // the email link can also land in a tab where the app is already open
     countInPending = currentRoute().name === 'countdowns';
     render();
     window.scrollTo(0, 0);
@@ -927,14 +997,313 @@
 
   // Pick up changes made in another tab of the same browser.
   window.addEventListener('storage', (e) => {
+    if (e.key === SYNC_KEY) {
+      loadSession();
+      renderSync();
+      return;
+    }
     if (e.key !== STORAGE_KEY || document.querySelector('dialog[open]')) return;
     hideToast();
     state = load();
+    takeSnapshot();
     render();
   });
 
+  // ---------- sync across devices (optional: needs config.js filled in) ----------
+
+  const SYNC_KEY = 'todo-sync';
+  const config = window.TODO_SYNC || {};
+  const SYNC = config.url && config.key ? { url: String(config.url).replace(/\/+$/, ''), key: String(config.key) } : null;
+
+  let session = null; // { access_token, refresh_token, expires_at, user: { id, email } }
+  let syncStatus = 'idle';
+  let syncMessage = '';
+  let syncTimer;
+  let syncing = false;
+  let syncAgain = false;
+
+  function loadSession() {
+    try {
+      session = JSON.parse(localStorage.getItem(SYNC_KEY));
+    } catch {
+      session = null;
+    }
+    if (!session || !session.refresh_token) session = null;
+  }
+
+  function storeSession() {
+    try {
+      if (session) localStorage.setItem(SYNC_KEY, JSON.stringify(session));
+      else localStorage.removeItem(SYNC_KEY);
+    } catch {
+      // Without storage the sign-in lasts for this visit only.
+    }
+  }
+
+  async function request(path, { method = 'GET', body, auth = true, headers = {} } = {}) {
+    const res = await fetch(`${SYNC.url}${path}`, {
+      method,
+      headers: {
+        apikey: SYNC.key,
+        'Content-Type': 'application/json',
+        ...(auth && session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // Not JSON; the status code is enough.
+    }
+    if (!res.ok) {
+      const error = new Error((data && (data.msg || data.message || data.error_description || data.error)) || `error ${res.status}`);
+      error.status = res.status;
+      throw error;
+    }
+    return data;
+  }
+
+  function setSession(tokens, user) {
+    session = {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: Date.now() + (Number(tokens.expires_in) || 3600) * 1000,
+      user: user || (session && session.user) || null,
+    };
+    storeSession();
+  }
+
+  function signOutLocally(message = '') {
+    session = null;
+    storeSession();
+    setSyncStatus('idle', message);
+  }
+
+  async function freshToken() {
+    if (session.expires_at - Date.now() > 60 * 1000) return;
+    try {
+      const tokens = await request('/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        auth: false,
+        body: { refresh_token: session.refresh_token },
+      });
+      setSession(tokens, tokens.user ? { id: tokens.user.id, email: tokens.user.email } : null);
+    } catch (error) {
+      if (error.status === 400 || error.status === 401) signOutLocally('Your sign-in expired. Sign in again to keep syncing.');
+      throw error;
+    }
+  }
+
+  // Remote changes wait while you are editing something or a tick is still animating.
+  const canApplyRemote = () => !document.querySelector('dialog[open]') && completing.size === 0;
+
+  function applyMerged(merged) {
+    if (JSON.stringify(merged) === JSON.stringify(state)) return;
+    hideToast(); // an undo from before this merge could otherwise erase what just arrived
+    state = merged;
+    takeSnapshot();
+    persist();
+    render();
+  }
+
+  function scheduleSync(delay = 800) {
+    if (!SYNC || !session) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(sync, delay);
+  }
+
+  // Pull the saved copy, merge it with this device's, and save the result back.
+  // The version number stops two devices from overwriting each other: if another one saved first, merge again.
+  async function sync() {
+    if (!SYNC || !session || !session.user) return;
+    if (syncing) {
+      syncAgain = true;
+      return;
+    }
+    if (!canApplyRemote()) {
+      scheduleSync(1500);
+      return;
+    }
+    syncing = true;
+    if (syncStatus !== 'synced') setSyncStatus('syncing');
+    try {
+      await freshToken();
+      const mine = `user_id=eq.${encodeURIComponent(session.user.id)}`;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const rows = await request(`/rest/v1/lists?select=data,version&${mine}`);
+        const row = rows && rows[0];
+        if (!row) {
+          try {
+            await request('/rest/v1/lists', {
+              method: 'POST',
+              body: { user_id: session.user.id, data: state, version: 1 },
+              headers: { Prefer: 'return=minimal' },
+            });
+            break;
+          } catch (error) {
+            if (error.status === 409) continue;
+            throw error;
+          }
+        }
+        const remote = normalize(row.data);
+        const merged = merge(state, remote);
+        if (!canApplyRemote()) {
+          syncAgain = true;
+          break;
+        }
+        applyMerged(merged);
+        if (JSON.stringify(merged) === JSON.stringify(remote)) break;
+        const updated = await request(`/rest/v1/lists?${mine}&version=eq.${row.version}`, {
+          method: 'PATCH',
+          body: { data: merged, version: row.version + 1, updated_at: new Date().toISOString() },
+          headers: { Prefer: 'return=representation' },
+        });
+        if (updated && updated.length) break;
+      }
+      setSyncStatus('synced');
+    } catch (error) {
+      if (!session) return; // signed out because the sign-in expired
+      setSyncStatus(error instanceof TypeError ? 'offline' : 'error', error.message);
+    } finally {
+      syncing = false;
+      if (syncAgain) {
+        syncAgain = false;
+        scheduleSync(500);
+      }
+    }
+  }
+
+  function setSyncStatus(status, message = '') {
+    syncStatus = status;
+    syncMessage = message;
+    renderSync();
+  }
+
+  function renderSync() {
+    const text = $('sync-text');
+    const action = $('sync-action');
+    const signOut = $('sync-signout');
+    if (!SYNC || !session) {
+      text.textContent = syncMessage || 'Saved in this browser only.';
+      action.hidden = !SYNC;
+      action.textContent = 'Sign in to sync';
+      signOut.hidden = true;
+      return;
+    }
+    const who = (session.user && session.user.email) || 'your account';
+    text.textContent = {
+      syncing: 'Syncing…',
+      synced: `Synced as ${who}.`,
+      offline: 'Offline. Changes will sync when you’re back.',
+      error: `Couldn’t sync${syncMessage ? ` (${syncMessage})` : ''}.`,
+    }[syncStatus] || `Signed in as ${who}.`;
+    action.hidden = syncStatus !== 'error' && syncStatus !== 'offline';
+    action.textContent = 'Try again';
+    signOut.hidden = false;
+  }
+
+  $('sync-action').addEventListener('click', () => {
+    if (session) sync();
+    else openSyncSheet();
+  });
+
+  $('sync-signout').addEventListener('click', async () => {
+    clearTimeout(syncTimer);
+    try {
+      await request('/auth/v1/logout', { method: 'POST' });
+    } catch {
+      // Signing out on this device is what matters; the server session simply expires.
+    }
+    signOutLocally();
+  });
+
+  // ---------- sign-in sheet ----------
+
+  const syncSheet = $('sync-sheet');
+
+  function openSyncSheet() {
+    $('sync-form').reset();
+    $('sync-note').textContent =
+      'Enter your email and you’ll get a sign-in link. Open it on this device, then sign in the same way on your other devices.';
+    $('row-email').hidden = false;
+    $('sync-submit').hidden = false;
+    $('sync-submit').disabled = false;
+    $('sync-submit').textContent = 'Send link';
+    $('sync-cancel').textContent = 'Cancel';
+    syncSheet.showModal();
+    $('f-email').focus();
+  }
+
+  $('sync-cancel').addEventListener('click', () => syncSheet.close());
+
+  $('sync-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('f-email').value.trim();
+    if (!email) return;
+    const submit = $('sync-submit');
+    submit.disabled = true;
+    submit.textContent = 'Sending…';
+    try {
+      const back = location.origin + location.pathname;
+      await request(`/auth/v1/otp?redirect_to=${encodeURIComponent(back)}`, {
+        method: 'POST',
+        auth: false,
+        body: { email, create_user: true },
+      });
+      $('sync-note').textContent = `A sign-in link is on its way to ${email}. Open it on this device to finish.`;
+      $('row-email').hidden = true;
+      submit.hidden = true;
+      $('sync-cancel').textContent = 'Done';
+      $('sync-cancel').focus();
+    } catch (error) {
+      $('sync-note').textContent = `Couldn’t send the link (${error instanceof TypeError ? 'no connection' : error.message}). Try again in a moment.`;
+      submit.disabled = false;
+      submit.textContent = 'Send link';
+    }
+  });
+
+  // Coming back from the email link: the sign-in arrives in the address after "#".
+  function finishSignIn() {
+    if (!SYNC) return;
+    const params = new URLSearchParams(location.hash.slice(1));
+    const clean = () => history.replaceState(null, '', `${location.pathname}${location.search}#home`);
+    if (params.get('access_token') && params.get('refresh_token')) {
+      setSession(
+        { access_token: params.get('access_token'), refresh_token: params.get('refresh_token'), expires_in: params.get('expires_in') },
+        null
+      );
+      clean();
+      setSyncStatus('syncing');
+      request('/auth/v1/user')
+        .then((user) => {
+          session.user = { id: user.id, email: user.email };
+          storeSession();
+          sync();
+        })
+        .catch((error) => setSyncStatus('error', error.message));
+    } else if (params.get('error_description') || params.get('error')) {
+      clean();
+      setSyncStatus('idle', `Sign-in didn’t work (${params.get('error_description') || params.get('error')}). Try sending a new link.`);
+    }
+  }
+
   // ---------- go ----------
 
+  loadSession();
+  finishSignIn();
   countInPending = currentRoute().name === 'countdowns';
   render();
+  renderSync();
+  if (session && session.user) sync();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sync();
+  });
+  window.addEventListener('online', () => sync());
+  setInterval(() => {
+    if (document.visibilityState === 'visible') sync();
+  }, 60 * 1000);
 })();
