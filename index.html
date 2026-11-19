@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <aside class="sidebar" id="sidebar" aria-label="Lists"></aside>
+
   <div class="page">
     <main id="view"></main>
 
@@ -114,6 +116,18 @@
         <span class="spacer"></span>
         <button type="button" class="btn ghost" id="sync-cancel">Cancel</button>
         <button type="submit" class="btn" id="sync-submit">Send link</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-sheet" class="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p class="sheet-note" id="confirm-text"></p>
+      <div class="sheet-actions">
+        <span class="spacer"></span>
+        <button type="submit" class="btn ghost" value="cancel" id="confirm-cancel">Cancel</button>
+        <button type="submit" class="btn danger" value="ok" id="confirm-ok">Delete</button>
       </div>
     </form>
   </dialog>

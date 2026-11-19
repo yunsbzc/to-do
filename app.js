@@ -245,19 +245,51 @@
     $('toast').classList.remove('show');
   }
 
+  // A short message at the bottom of the screen, with Undo when the change can be taken back.
+  function showToast(message, undo = null) {
+    $('toast-text').textContent = message;
+    undoAction = undo;
+    $('toast-undo').hidden = !undo;
+    $('toast').classList.toggle('plain', !undo);
+    $('toast').classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, undo ? 8000 : 4000);
+  }
+
   // Applies a change, then offers to take it back for a few seconds.
   function changeWithUndo(message, mutate) {
     const before = JSON.stringify(state);
     mutate();
     commit();
-    $('toast-text').textContent = message;
-    undoAction = () => {
+    showToast(message, () => {
       state = normalize(JSON.parse(before));
       commit();
-    };
-    $('toast').classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(hideToast, 8000);
+    });
+  }
+
+  // ---------- confirm dialog (before anything is deleted or replaced) ----------
+
+  function confirmAction({ title, text, ok }) {
+    const dialog = $('confirm-sheet');
+    $('confirm-title').textContent = title;
+    $('confirm-text').textContent = text;
+    $('confirm-ok').textContent = ok;
+    dialog.returnValue = '';
+    dialog.showModal();
+    $('confirm-cancel').focus(); // the safe choice is the default
+    return new Promise((resolve) => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'), { once: true });
+    });
+  }
+
+  // The row just added gets a brief highlight, so you can see where it went.
+  let justAdded = null;
+
+  function markAdded(id) {
+    justAdded = id;
+    setTimeout(() => {
+      if (justAdded === id) justAdded = null;
+    }, 1600);
   }
 
   $('toast-undo').addEventListener('click', () => {
@@ -317,7 +349,7 @@
   function itemRow(item, { showKind = false, showFlag = false } = {}) {
     const sub = [showKind && kindName(item.kind), item.note].filter(Boolean).join(' · ');
     const pending = completing.has(item.id);
-    const li = el('li', { className: pending ? 'completing' : '' });
+    const li = el('li', { className: [pending && 'completing', item.id === justAdded && 'just-added'].filter(Boolean).join(' ') });
     const tick = el('input', {
       type: 'checkbox',
       checked: pending,
@@ -349,7 +381,7 @@
     const abs = Math.abs(days);
     return el(
       'li',
-      { className: days < 0 ? 'past' : '' },
+      { className: [days < 0 && 'past', c.id === justAdded && 'just-added'].filter(Boolean).join(' ') },
       el(
         'button',
         { type: 'button', className: 'open', ariaLabel: `Edit ${c.name}`, onclick: () => openSheet({ countdown: c }) },
@@ -397,7 +429,7 @@
     );
   }
 
-  const backHome = () => el('a', { className: 'eyebrow', href: '#home', textContent: '‹ Home' });
+  const backHome = () => el('a', { className: 'eyebrow back-home', href: '#home', textContent: '‹ Home' });
 
   // ---------- views ----------
 
@@ -476,22 +508,27 @@
       );
     }
 
+    // On wide screens the sidebar shows these, so Home hides them there.
     nodes.push(
-      ...section(
-        'Lists',
-        state.kinds.map((k) =>
-          linkRow(`#list/${encodeURIComponent(k.id)}`, k.name, active.filter((i) => i.kind === k.id).length)
-        )
-      ),
       el(
         'div',
-        { className: 'view-actions' },
-        el('button', { type: 'button', className: 'text-button', textContent: 'New list', onclick: () => openListSheet() })
-      ),
-      ...section('More', [
-        linkRow('#countdowns', 'Countdowns', state.countdowns.filter((c) => daysUntil(c.date) >= 0).length),
-        linkRow('#done', 'Done', state.items.length - active.length),
-      ])
+        { className: 'home-nav' },
+        ...section(
+          'Lists',
+          state.kinds.map((k) =>
+            linkRow(`#list/${encodeURIComponent(k.id)}`, k.name, active.filter((i) => i.kind === k.id).length)
+          )
+        ),
+        el(
+          'div',
+          { className: 'view-actions' },
+          el('button', { type: 'button', className: 'text-button', textContent: 'New list', onclick: () => openListSheet() })
+        ),
+        ...section('More', [
+          linkRow('#countdowns', 'Countdowns', state.countdowns.filter((c) => daysUntil(c.date) >= 0).length),
+          linkRow('#done', 'Done', state.items.length - active.length),
+        ])
+      )
     );
 
     return nodes;
@@ -524,7 +561,17 @@
             type: 'button',
             className: 'text-button',
             textContent: 'Delete this list',
-            onclick: () => {
+            onclick: async () => {
+              const inList = state.items.filter((i) => i.kind === kind.id);
+              const open = inList.filter((i) => i.state !== 'done').length;
+              const finished = inList.length - open;
+              const parts = [open && plural(open, 'to-do'), finished && `${finished} finished in Done`].filter(Boolean);
+              const ok = await confirmAction({
+                title: `Delete “${kind.name}”?`,
+                text: parts.length ? `The list and its ${parts.join(' and ')} will be deleted.` : 'The list will be deleted.',
+                ok: 'Delete list',
+              });
+              if (!ok) return;
               changeWithUndo(`${quote(kind.name)} list deleted`, () => {
                 state.kinds = state.kinds.filter((k) => k.id !== kind.id);
                 state.items = state.items.filter((i) => i.kind !== kind.id);
@@ -771,9 +818,58 @@
 
   let renderedDay = '';
 
+  // ---------- sidebar (wide screens) ----------
+
+  function renderSidebar(route) {
+    const active = state.items.filter((i) => i.state !== 'done');
+    const link = (href, name, count, current) =>
+      el(
+        'li',
+        {},
+        el(
+          'a',
+          { className: 'side-link', href, ariaCurrent: current ? 'page' : null },
+          el('span', { className: 'side-name', textContent: name }),
+          count !== null && el('span', { className: 'side-count', textContent: String(count) })
+        )
+      );
+
+    $('sidebar').replaceChildren(
+      el('p', { className: 'side-app', textContent: 'To Do' }),
+      el('button', { type: 'button', className: 'btn side-add', textContent: 'New to-do', title: 'New to-do (N)', onclick: () => openAdd() }),
+      el(
+        'nav',
+        { ariaLabel: 'Main' },
+        el('ul', { className: 'side-list' }, link('#home', 'Home', null, route.name === 'home')),
+        el('h2', { className: 'group', textContent: 'Lists' }),
+        el(
+          'ul',
+          { className: 'side-list' },
+          ...state.kinds.map((k) =>
+            link(
+              `#list/${encodeURIComponent(k.id)}`,
+              k.name,
+              active.filter((i) => i.kind === k.id).length,
+              route.name === 'list' && route.kind.id === k.id
+            )
+          )
+        ),
+        el('button', { type: 'button', className: 'text-button side-new-list', textContent: 'New list', onclick: () => openListSheet() }),
+        el('h2', { className: 'group', textContent: 'More' }),
+        el(
+          'ul',
+          { className: 'side-list' },
+          link('#countdowns', 'Countdowns', state.countdowns.filter((c) => daysUntil(c.date) >= 0).length, route.name === 'countdowns'),
+          link('#done', 'Done', state.items.length - active.length, route.name === 'done')
+        )
+      )
+    );
+  }
+
   function render() {
     renderedDay = startOfToday().toDateString();
     const route = currentRoute();
+    renderSidebar(route);
     const views = {
       home: () => ['To Do', homeView()],
       list: () => [`${route.kind.name} · To Do`, listView(route.kind)],
@@ -882,8 +978,16 @@
 
     if (kind === COUNTDOWN) {
       if (!due) return;
-      if (editing && editing.countdown) Object.assign(editing.countdown, { name: title, date: due });
-      else state.countdowns.push({ id: uid(), name: title, date: due });
+      sheet.close();
+      if (editing && editing.countdown) {
+        Object.assign(editing.countdown, { name: title, date: due });
+        commit();
+      } else {
+        const id = uid();
+        markAdded(id);
+        changeWithUndo(`${quote(title)} added to Countdowns`, () => state.countdowns.push({ id, name: title, date: due }));
+      }
+      return;
     } else {
       const newState = sheet.querySelector('input[name="state"]:checked').value;
       const fields = {
@@ -894,24 +998,34 @@
         state: newState,
         next: newState !== 'done' && $('f-next').checked,
       };
+      sheet.close();
       if (editing && editing.item) {
         const item = editing.item;
         fields.doneAt = newState === 'done' ? item.doneAt ?? Date.now() : null;
         Object.assign(item, fields);
+        commit();
       } else {
-        state.items.unshift({ id: uid(), createdAt: Date.now(), doneAt: null, ...fields });
+        const id = uid();
+        markAdded(id);
+        changeWithUndo(`${quote(title)} added to ${kindName(kind)}`, () =>
+          state.items.unshift({ id, createdAt: Date.now(), doneAt: null, ...fields })
+        );
       }
     }
-
-    sheet.close();
-    commit();
   });
 
-  $('sheet-delete').addEventListener('click', () => {
+  $('sheet-delete').addEventListener('click', async () => {
     if (!editing) return;
     const { item, countdown } = editing;
+    const name = item ? item.title : countdown.name;
+    const ok = await confirmAction({
+      title: item ? 'Delete this to-do?' : 'Delete this countdown?',
+      text: `“${name}” will be deleted.`,
+      ok: 'Delete',
+    });
+    if (!ok) return; // back to the edit sheet, unchanged
     sheet.close();
-    changeWithUndo(`${quote(item ? item.title : countdown.name)} deleted`, () => {
+    changeWithUndo(`${quote(name)} deleted`, () => {
       if (item) state.items = state.items.filter((i) => i !== item);
       else state.countdowns = state.countdowns.filter((c) => c !== countdown);
     });
@@ -985,14 +1099,20 @@
       const parsed = JSON.parse(await file.text());
       incoming = normalize(parsed && !parsed.items && (parsed.todos || parsed.books) ? migrateOld(parsed) : parsed);
     } catch {
-      alert("That file doesn't look like a backup from this page.");
+      showToast('That file isn’t a backup from this app.');
       return;
     }
     const total = incoming.items.length + incoming.countdowns.length;
-    if (!confirm(`Replace everything here with the backup (${plural(total, 'item')})?`)) return;
+    const ok = await confirmAction({
+      title: 'Replace everything?',
+      text: `Everything here will be replaced with the backup (${plural(total, 'item')}).${session ? ' Your other signed-in devices will get it too.' : ''}`,
+      ok: 'Replace',
+    });
+    if (!ok) return;
     hideToast();
     state = incoming;
     commit();
+    showToast('Backup restored');
   });
 
   // Pick up changes made in another tab of the same browser.
