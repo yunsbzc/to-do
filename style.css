@@ -164,9 +164,51 @@ h1 {
 }
 
 .empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
   margin: var(--space-7) 0;
   color: var(--muted);
   text-align: center;
+}
+
+.empty p { margin: 0; }
+
+/* A circle, then a tick, drawing themselves in. Their resting state is drawn, so reduced motion shows it whole. */
+.clear-mark svg {
+  display: block;
+  width: 56px;
+  height: 56px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  animation: settle 0.9s ease-out both;
+}
+
+.clear-mark circle { animation: draw 0.55s ease-out both; }
+
+.clear-mark path { animation: draw 0.3s 0.45s ease-out both; }
+
+@keyframes draw {
+  from { stroke-dashoffset: 1; }
+}
+
+@keyframes settle {
+  0% { transform: scale(0.85); }
+  70% { transform: scale(1.04); }
+}
+
+.all-clear p { animation: fade 0.4s 0.5s ease-out both; }
+
+/* A count that just changed. */
+.bump { display: inline-block; animation: bump 0.4s ease-out; }
+
+@keyframes bump {
+  40% { color: var(--accent); transform: scale(1.35); }
 }
 
 /* ---------- rows ---------- */
@@ -260,11 +302,12 @@ h1 {
   font: var(--fs-title)/1.3 var(--serif);
 }
 
-/* Completing a to-do: the circle pops, then the title fades and is struck through. */
-.rows .title {
-  text-decoration: line-through 1.5px transparent;
-  transition: color 0.25s, text-decoration-color 0.25s;
-}
+/* Completing a to-do: the circle fills with a ripple and the tick grows in, the title fades and is struck
+   through, then the row folds away. The transition sits on the completing state only, so switching between
+   light and dark doesn't fade every title. */
+.rows .title { text-decoration: line-through 1.5px transparent; }
+
+li.completing .title { transition: color 0.25s, text-decoration-color 0.25s; }
 
 /* A newly added row: a brief tint that fades out. */
 li.just-added { animation: added 1.6s ease-out; }
@@ -275,10 +318,31 @@ li.just-added { animation: added 1.6s ease-out; }
 
 li.completing .title { color: var(--muted); text-decoration-color: var(--muted); }
 
-li.completing .tick input { animation: pop 0.15s ease-out; }
+li.completing .tick input { animation: pop 0.2s ease-out, ripple 0.5s ease-out, tick-in 0.25s ease-out; }
 
 @keyframes pop {
   50% { transform: scale(1.2); }
+}
+
+@keyframes ripple {
+  from { box-shadow: 0 0 0 0 var(--accent); }
+  to { box-shadow: 0 0 0 10px transparent; }
+}
+
+@keyframes tick-in {
+  from { background-size: 0; }
+}
+
+.rows li.leaving {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: height 0.25s ease-in-out, opacity 0.2s ease-out;
+}
+
+/* On Done, the filled tick lightens on hover: it can be taken back. */
+@media (hover: hover) {
+  li.done .tick:hover input { opacity: 0.55; }
 }
 
 .sub {
@@ -300,9 +364,9 @@ li.completing .tick input { animation: pop 0.15s ease-out; }
 /* Urgency never rests on colour alone: today, tomorrow and overdue dates are bold and say so in words. */
 .due.soon { color: var(--accent); font-weight: 600; }
 
-.due.overdue { color: var(--ink); font-weight: 600; }
+.due.overdue { color: var(--danger); font-weight: 600; }
 
-.flag {
+.pin {
   display: grid;
   flex: none;
   place-items: center;
@@ -316,20 +380,34 @@ li.completing .tick input { animation: pop 0.15s ease-out; }
   border-radius: 50%;
 }
 
-.flag svg {
+.pin svg {
   width: 18px;
   height: 18px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5;
+  stroke-linecap: round;
   stroke-linejoin: round;
+  transform-origin: 50% 85%; /* the point of the pin */
+  transition: transform 0.15s;
 }
 
-.flag:hover { color: var(--accent); }
+@media (hover: hover) {
+  .pin:hover { color: var(--accent); }
 
-.flag[aria-pressed="true"] { color: var(--accent); }
+  .pin:hover svg { transform: rotate(-12deg); }
+}
 
-.flag[aria-pressed="true"] svg { fill: currentColor; }
+.pin[aria-pressed="true"] { color: var(--accent); }
+
+.pin[aria-pressed="true"] path:first-child { fill: currentColor; }
+
+/* Pinning pushes the pin in: it drops, overshoots and settles. */
+.pin.just-pinned svg { animation: pin-in 0.4s cubic-bezier(0.3, 1.5, 0.5, 1); }
+
+@keyframes pin-in {
+  from { transform: translateY(-5px) scale(0.7) rotate(-20deg); }
+}
 
 /* list links on the home screen */
 
@@ -781,8 +859,10 @@ dialog h2 {
 
 .sheet-aside { margin: calc(-1 * var(--space-3)) 0 var(--space-2); }
 
-/* New to-dos start with just a title and a list; the rest is one tap away. */
+/* New to-dos start with just a title and a list; the rest is one tap away, and eases in when shown. */
 .sheet-more { margin: calc(-1 * var(--space-2)) 0 0; }
+
+#row-note, #row-due, #row-next { animation: fade 0.2s ease-out; }
 
 .sheet-actions {
   display: flex;
@@ -825,6 +905,27 @@ dialog h2 {
 
 .toast.plain { padding: 12px 20px; }
 
+/* How long Undo stays: a thin line that drains from right to left, and holds while the message is paused. */
+.toast::after {
+  content: "";
+  position: absolute;
+  inset: auto 22px 5px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  opacity: 0.3;
+  transform-origin: left;
+  transform: scaleX(0);
+}
+
+.toast.timing:not(.plain)::after { animation: drain var(--toast-ms, 8s) linear both; }
+
+.toast.timing.paused:not(.plain)::after { animation-play-state: paused; }
+
+@keyframes drain {
+  from { transform: scaleX(1); }
+}
+
 #toast-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -855,6 +956,20 @@ dialog h2 {
 }
 
 .side-add { width: 100%; color: var(--on-accent); background: var(--accent); }
+
+/* The keyboard shortcut, shown where it applies. */
+.side-add kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: var(--space-2);
+  padding: 0 5px;
+  font: 600 0.6875rem/1 var(--sans);
+  vertical-align: 1px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 5px;
+}
 
 .side-list { list-style: none; margin: 0; padding: 0; }
 
@@ -908,7 +1023,23 @@ dialog h2 {
   border-top: 1px solid var(--line);
 }
 
+/* One highlight that slides to the current tab (placed by placeTabMarker in app.js). */
+.tabbar::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 0;
+  width: var(--tab-w, 0);
+  height: 44px;
+  background: var(--field);
+  border-radius: 10px;
+  transform: translateX(var(--tab-x, 0));
+}
+
+.tabbar.ready::before { transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
 .tabbar a {
+  position: relative;
   display: grid;
   flex: 1;
   place-items: center;
@@ -929,8 +1060,8 @@ dialog h2 {
 
 .tabbar a:active { background: var(--press); }
 
-/* Same treatment as the current page in the sidebar. */
-.tabbar a[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--field); }
+/* Same treatment as the current page in the sidebar; the highlight behind it is the sliding shape. */
+.tabbar a[aria-current="page"] { color: var(--ink); font-weight: 600; background: none; }
 
 /* ---------- desktop: sidebar beside a wider content column ---------- */
 
@@ -1003,4 +1134,7 @@ dialog h2 {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+
+  /* Without its animation the Undo bar would sit full and never drain, so leave it out. */
+  .toast::after { display: none; }
 }

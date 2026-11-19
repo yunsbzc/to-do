@@ -11,7 +11,9 @@
   ];
   const STATES = ['open', 'doing', 'done'];
   const COUNTDOWN = '__countdown';
-  const FLAG_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 3.5h9v13.5L10 13.6 5.5 17Z"/></svg>';
+  const PIN_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3h5l-.6 4.6L14.5 11h-9l2.6-3.4Z"/><path d="M10 11v6"/></svg>';
+  // A circle and a tick that draw themselves, for a list that has just been cleared.
+  const CLEAR_MARK = '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="21" pathLength="1"/><path d="m15.5 24.5 6 6 11.5-13" pathLength="1"/></svg>';
 
   const $ = (id) => document.getElementById(id);
 
@@ -222,8 +224,30 @@
     return `“${text.length > 26 ? `${text.slice(0, 25)}…` : text}”`;
   }
 
-  function emptyState(text) {
-    return el('p', { className: 'empty', textContent: text });
+  // An empty page says why it is empty and, where there is one, offers the next step as a button.
+  function emptyState(text, action = null) {
+    return el(
+      'div',
+      { className: 'empty' },
+      el('p', { textContent: text }),
+      action && el('button', { type: 'button', className: 'btn ghost', textContent: action.label, onclick: action.onclick, focus: 'btn:empty' })
+    );
+  }
+
+  // Shown when everything in view has been ticked off: a mark that draws itself, and a line about it.
+  function allClear(text) {
+    return el(
+      'div',
+      { className: 'empty all-clear' },
+      el('span', { className: 'clear-mark', innerHTML: CLEAR_MARK }),
+      el('p', { textContent: text })
+    );
+  }
+
+  // Overdue and dated to-dos first, soonest first; undated ones keep their newest-first order after them.
+  function byDue(a, b) {
+    if (!a.due || !b.due) return (a.due ? 0 : 1) - (b.due ? 0 : 1);
+    return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
   }
 
   function kindName(id) {
@@ -238,34 +262,69 @@
 
   // ---------- undo toast ----------
 
+  const toast = $('toast');
   let toastTimer;
+  let toastEnds = 0; // when the message will go
+  let toastLeft = 0; // time it had left when paused
   let undoAction = null;
+
+  function runToastClock(ms) {
+    clearTimeout(toastTimer);
+    toastEnds = Date.now() + ms;
+    toastTimer = setTimeout(hideToast, ms);
+  }
 
   function hideToast() {
     clearTimeout(toastTimer);
     undoAction = null;
-    $('toast').classList.remove('show');
+    toast.classList.remove('show', 'paused');
   }
 
   // A short message at the bottom of the screen, with Undo when the change can be taken back.
+  // With Undo, a thin bar drains along the bottom to show how long it stays.
   function showToast(message, undo = null) {
+    const ms = undo ? 8000 : 4000;
     $('toast-text').textContent = message;
     undoAction = undo;
     $('toast-undo').hidden = !undo;
-    $('toast').classList.toggle('plain', !undo);
-    $('toast').classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(hideToast, undo ? 8000 : 4000);
+    toast.classList.toggle('plain', !undo);
+    toast.style.setProperty('--toast-ms', `${ms}ms`);
+    toast.classList.remove('timing', 'paused');
+    void toast.offsetWidth; // restart the bar
+    toast.classList.add('show', 'timing');
+    runToastClock(ms);
   }
 
-  // Applies a change, then offers to take it back for a few seconds.
+  // Resting the pointer on the message, or focusing Undo, stops the clock and the bar until you move away.
+  function pauseToast() {
+    if (!toast.classList.contains('show') || toast.classList.contains('paused')) return;
+    clearTimeout(toastTimer);
+    toastLeft = Math.max(1000, toastEnds - Date.now());
+    toast.classList.add('paused');
+  }
+
+  function resumeToast() {
+    if (!toast.classList.contains('paused') || toast.matches(':hover') || toast.contains(document.activeElement)) return;
+    toast.classList.remove('paused');
+    runToastClock(toastLeft);
+  }
+
+  toast.addEventListener('pointerenter', pauseToast);
+  toast.addEventListener('pointerleave', resumeToast);
+  toast.addEventListener('focusin', pauseToast);
+  toast.addEventListener('focusout', () => setTimeout(resumeToast)); // once focus has landed elsewhere
+
+  // Applies a change, then offers to take it back for a few seconds. Taking it back returns focus to
+  // the control the change was made from (the tick, the row), since Undo itself disappears.
   function changeWithUndo(message, mutate) {
     const before = JSON.stringify(state);
+    const spot = focusSpot();
     mutate();
     commit();
     showToast(message, () => {
       state = normalize(JSON.parse(before));
       commit();
+      return spot;
     });
   }
 
@@ -295,8 +354,12 @@
   }
 
   $('toast-undo').addEventListener('click', () => {
-    if (undoAction) undoAction();
+    const undo = undoAction;
+    const hadFocus = toast.contains(document.activeElement);
     hideToast();
+    if (!undo) return;
+    const spot = undo();
+    if (hadFocus && spot) restoreFocus(spot, false);
   });
 
   // ---------- rows ----------
@@ -345,10 +408,29 @@
     if (reducedMotion.matches) return finish();
     completing.add(item.id);
     li.classList.add('completing');
-    setTimeout(finish, 350);
+    // The tick pops and the title is struck through; then the row folds away so the list closes up smoothly.
+    setTimeout(() => {
+      if (!li.isConnected) return finish();
+      li.style.height = `${li.offsetHeight}px`;
+      void li.offsetHeight;
+      li.classList.add('leaving');
+      li.style.height = '0px';
+      setTimeout(finish, 260);
+    }, 380);
   }
 
-  function itemRow(item, { showKind = false, showFlag = false } = {}) {
+  // The pin just pressed plays a small pop when its row is drawn again.
+  let justPinned = null;
+
+  function togglePin(item) {
+    item.next = !item.next;
+    justPinned = item.next ? item.id : null;
+    commit();
+    justPinned = null;
+    showToast(item.next ? `${quote(item.title)} pinned to Next up` : `${quote(item.title)} unpinned from Next up`);
+  }
+
+  function itemRow(item, { showKind = false, showPin = false } = {}) {
     const sub = [showKind && kindName(item.kind), item.note].filter(Boolean).join(' · ');
     const pending = completing.has(item.id);
     const li = el('li', { className: [pending && 'completing', item.id === justAdded && 'just-added'].filter(Boolean).join(' ') });
@@ -364,18 +446,15 @@
     li.append(
       el('label', { className: 'tick' }, tick),
       openButton(item.id, `Edit ${item.title}`, item.title, sub, dueBadge(item), () => openSheet({ item })),
-      ...[showFlag && el('button', {
+      ...[showPin && el('button', {
           type: 'button',
-          className: 'flag',
-          focus: `flag:${item.id}`,
-          innerHTML: FLAG_ICON,
-          title: item.next ? 'Remove from Next up' : 'Add to Next up',
-          ariaLabel: `Next up: ${item.title}`,
+          className: `pin${item.id === justPinned ? ' just-pinned' : ''}`,
+          focus: `pin:${item.id}`,
+          innerHTML: PIN_ICON,
+          title: item.next ? 'Unpin from Next up' : 'Pin to Next up',
+          ariaLabel: `Pin ${item.title} to Next up`,
           ariaPressed: String(item.next),
-          onclick: () => {
-            item.next = !item.next;
-            commit();
-          },
+          onclick: () => togglePin(item),
         })].filter(Boolean)
     );
     return li;
@@ -420,6 +499,15 @@
     );
   }
 
+  // A count that changed since it was last shown gives a small bump, so you can see where a to-do went.
+  const shownCounts = new Map();
+
+  function countBadge(key, n, className) {
+    const before = shownCounts.get(key);
+    shownCounts.set(key, n);
+    return el('span', { className: `${className}${before !== undefined && before !== n ? ' bump' : ''}`, textContent: String(n) });
+  }
+
   function linkRow(href, title, count) {
     return el(
       'li',
@@ -428,7 +516,7 @@
         'a',
         { className: 'list-link', href, focus: `link:${href}` },
         el('span', { className: 'title', textContent: title }),
-        el('span', { className: 'count', textContent: String(count) })
+        countBadge(`link:${href}`, count, 'count')
       )
     );
   }
@@ -440,8 +528,8 @@
 
   function homeView() {
     const active = state.items.filter((i) => i.state !== 'done');
-    const next = active.filter((i) => i.next);
-    const doing = active.filter((i) => i.state === 'doing' && !i.next);
+    const next = active.filter((i) => i.next).sort(byDue);
+    const doing = active.filter((i) => i.state === 'doing' && !i.next).sort(byDue);
 
     // The next countdown gets its own line under the title, so it is left out of Coming up.
     const nextEvent = state.countdowns
@@ -465,13 +553,8 @@
     const today = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
     const todayStart = startOfToday().getTime();
     const doneToday = state.items.filter((i) => i.state === 'done' && i.doneAt >= todayStart).length;
-    const progress = active.length
-      ? `${doneToday} of ${active.length + doneToday} done today`
-      : doneToday
-        ? 'All done for today'
-        : state.items.length
-          ? 'All done'
-          : '';
+    // What happened today and what is left, without implying the whole backlog was due today.
+    const progress = active.length ? [doneToday && `${doneToday} done today`, `${active.length} to do`].filter(Boolean).join(' · ') : '';
 
     const nodes = [head(el('p', { className: 'dateline', textContent: today }), 'To Do', progress)];
 
@@ -488,19 +571,21 @@
     }
 
     if (!state.items.length && !state.countdowns.length) {
-      nodes.push(emptyState('A blank page. Press + to add your first to-do.'));
+      nodes.push(emptyState('A blank page.', { label: 'Add your first to-do', onclick: () => openAdd() }));
+    } else if (state.items.length && !active.length) {
+      nodes.push(allClear(doneToday ? `All done. ${plural(doneToday, 'to-do')} finished today.` : 'All done.'));
     }
 
     if (next.length) {
-      nodes.push(...section('Next up', next.map((i) => itemRow(i, { showKind: true }))));
+      nodes.push(...section('Next up', next.map((i) => itemRow(i, { showKind: true, showPin: true }))));
     } else if (active.length) {
       nodes.push(
         el('h2', { className: 'group', textContent: 'Next up' }),
-        el('p', { className: 'hint', textContent: 'Open a list and tap Next up (the bookmark) on a to-do to show it here.' })
+        el('p', { className: 'hint', textContent: 'Tap the pin on any to-do to keep it here.' })
       );
     }
 
-    if (doing.length) nodes.push(...section('In progress', doing.map((i) => itemRow(i, { showKind: true })), 'accent'));
+    if (doing.length) nodes.push(...section('In progress', doing.map((i) => itemRow(i, { showKind: true, showPin: true })), 'accent'));
 
     if (coming.length) {
       nodes.push(
@@ -537,15 +622,20 @@
   }
 
   function listView(kind) {
-    const items = state.items.filter((i) => i.kind === kind.id && i.state !== 'done');
+    const items = state.items.filter((i) => i.kind === kind.id && i.state !== 'done').sort(byDue);
     const doing = items.filter((i) => i.state === 'doing');
     const open = items.filter((i) => i.state === 'open');
-    const row = (i) => itemRow(i, { showFlag: true });
+    const row = (i) => itemRow(i, { showPin: true });
 
     const nodes = [head(backToLists(), kind.name, items.length ? `${items.length} to do` : '')];
 
     if (!items.length) {
-      nodes.push(emptyState('Nothing here. Press + to add something.'));
+      const finishedHere = state.items.some((i) => i.kind === kind.id);
+      nodes.push(
+        finishedHere
+          ? allClear('All done here.')
+          : emptyState('Nothing here yet.', { label: `Add to ${kind.name}`, onclick: () => openAdd() })
+      );
     } else if (doing.length) {
       nodes.push(...section('In progress', doing.map(row), 'accent'));
       if (open.length) nodes.push(...section('Not started', open.map(row)));
@@ -708,7 +798,7 @@
 
     if (!first) {
       const nodes = [head(null, 'Countdowns', '')];
-      if (!all.length) nodes.push(emptyState('Nothing to look forward to yet. Press + to add a date.'));
+      if (!all.length) nodes.push(emptyState('Nothing to look forward to yet.', { label: 'Add a date', onclick: () => openAdd() }));
       if (past.length) nodes.push(...section('Past', past.map((i) => countdownRow(i.c, i.days))));
       return nodes;
     }
@@ -732,7 +822,7 @@
     const nodes = [head(null, 'Done', allDone.length ? `${allDone.length} finished` : '')];
 
     if (!allDone.length) {
-      nodes.push(emptyState('Nothing finished yet. It will be recorded here.'));
+      nodes.push(emptyState('Nothing finished yet. To-dos you tick off are kept here.'));
       return nodes;
     }
 
@@ -769,7 +859,7 @@
               { className: 'done' },
               el(
                 'label',
-                { className: 'tick' },
+                { className: 'tick', title: `Move back to ${kindName(item.kind)}` },
                 el('input', {
                   type: 'checkbox',
                   checked: true,
@@ -836,13 +926,18 @@
           'a',
           { className: 'side-link', href, ariaCurrent: current ? 'page' : null, focus: `side:${href}` },
           el('span', { className: 'side-name', textContent: name }),
-          count !== null && el('span', { className: 'side-count', textContent: String(count) })
+          count !== null && countBadge(`side:${href}`, count, 'side-count')
         )
       );
 
     $('sidebar').replaceChildren(
       el('p', { className: 'side-app', textContent: 'To Do' }),
-      el('button', { type: 'button', className: 'btn side-add', textContent: 'New to-do', title: 'New to-do (N)', onclick: () => openAdd(), focus: 'side:add' }),
+      el(
+        'button',
+        { type: 'button', className: 'btn side-add', ariaKeyShortcuts: 'N', onclick: () => openAdd(), focus: 'side:add' },
+        'New to-do',
+        el('kbd', { textContent: 'N', ariaHidden: 'true', title: 'Press N anywhere' })
+      ),
       el(
         'nav',
         { ariaLabel: 'Main' },
@@ -917,6 +1012,18 @@
     if (target) target.focus({ preventScroll: true });
   }
 
+  // The tab bar's highlight is one shape that slides to the current tab.
+  function placeTabMarker() {
+    const bar = $('tabbar');
+    const current = bar.querySelector('[aria-current="page"]');
+    if (!current || !bar.offsetWidth) return; // hidden on wide screens
+    bar.style.setProperty('--tab-x', `${current.offsetLeft}px`);
+    bar.style.setProperty('--tab-w', `${current.offsetWidth}px`);
+    // Slide only between tabs, not in from the edge on first show.
+    if (!bar.classList.contains('ready')) requestAnimationFrame(() => bar.classList.add('ready'));
+  }
+  window.addEventListener('resize', placeTabMarker);
+
   let renderedRoute = '';
 
   function render() {
@@ -935,6 +1042,7 @@
       if (link.dataset.tab === tab) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
+    placeTabMarker();
 
     const views = {
       home: () => ['To Do', homeView()],
@@ -1194,9 +1302,9 @@
     }
     const total = incoming.items.length + incoming.countdowns.length;
     const ok = await confirmAction({
-      title: 'Replace everything?',
-      text: `Everything here will be replaced with the backup (${plural(total, 'item')}).${session ? ' Your other signed-in devices will get it too.' : ''}`,
-      ok: 'Replace',
+      title: 'Replace everything with this backup?',
+      text: `Your lists here will be replaced with the backup (${plural(total, 'item')}).${session ? ' Your other signed-in devices will get it too.' : ''}`,
+      ok: 'Replace with backup',
     });
     if (!ok) return;
     hideToast();

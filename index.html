@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside class="sidebar" id="sidebar" aria-label="Lists"></aside>
+  <aside class="sidebar" id="sidebar" aria-label="Sidebar"></aside>
 
   <div class="page">
     <main id="view"></main>
@@ -37,7 +37,7 @@
     <a href="#done" data-tab="done">Done</a>
   </nav>
 
-  <button type="button" class="fab" id="add" aria-label="Add" title="Add (N)">
+  <button type="button" class="fab" id="add" aria-label="Add" title="Add (N)" data-focus="fab">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
   </button>
 
@@ -80,7 +80,7 @@
 
       <label class="toggle" id="row-next">
         <input type="checkbox" id="f-next">
-        <span>Show in Next up</span>
+        <span>Pin to Next up</span>
       </label>
 
       <div class="sheet-actions">
