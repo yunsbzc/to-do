@@ -1225,24 +1225,33 @@
 
   const syncSheet = $('sync-sheet');
 
-  // Two steps: send the email, then either type its code here or tap its link on this device.
+  // Steps: enter your email → the link is sent (tap it on this device) → optionally type a code instead.
+  // Supabase's built-in emails contain only the link; a code appears only with a custom email template.
   let signInEmail = '';
+  let signInStep = 'email';
 
   function showSignInStep(step) {
-    const codeStep = step === 'code';
-    $('row-email').hidden = codeStep;
-    $('f-email').required = !codeStep;
-    $('row-code').hidden = !codeStep;
-    $('f-code').required = codeStep;
-    $('sync-restart').hidden = !codeStep;
+    signInStep = step;
+    $('row-email').hidden = step !== 'email';
+    $('f-email').required = step === 'email';
+    $('row-code').hidden = step !== 'code';
+    $('f-code').required = step === 'code';
+    $('row-have-code').hidden = step !== 'sent';
+    $('sync-restart').hidden = step === 'email';
     const submit = $('sync-submit');
+    submit.hidden = step === 'sent';
     submit.disabled = false;
-    submit.textContent = codeStep ? 'Sign in' : 'Send email';
-    $('sync-note').textContent = codeStep
-      ? `We sent an email to ${signInEmail}. Type the code from it here, or tap its link on this device.`
-      : 'Enter your email and you’ll get a code to sign in with. Do the same on each of your devices.';
-    (codeStep ? $('f-code') : $('f-email')).focus();
+    submit.textContent = step === 'code' ? 'Sign in' : 'Send link';
+    $('sync-cancel').textContent = step === 'sent' ? 'Done' : 'Cancel';
+    $('sync-note').textContent = {
+      email: 'Enter your email and you’ll get a sign-in link. Open it on this device, then do the same on your other devices.',
+      sent: `We sent a sign-in link to ${signInEmail}. Open the email on this device and tap the link.`,
+      code: `Type the code from the email sent to ${signInEmail}.`,
+    }[step];
+    ({ email: $('f-email'), sent: $('sync-cancel'), code: $('f-code') })[step].focus();
   }
+
+  $('sync-have-code').addEventListener('click', () => showSignInStep('code'));
 
   function openSyncSheet() {
     $('sync-form').reset();
@@ -1272,11 +1281,11 @@
         body: { email, create_user: true },
       });
       signInEmail = email;
-      showSignInStep('code');
+      showSignInStep('sent');
     } catch (error) {
-      $('sync-note').textContent = `Couldn’t send the email (${error instanceof TypeError ? 'no connection' : error.message}). Try again in a moment.`;
+      $('sync-note').textContent = `Couldn’t send the link (${error instanceof TypeError ? 'no connection' : error.message}). Try again in a moment.`;
       submit.disabled = false;
-      submit.textContent = 'Send email';
+      submit.textContent = 'Send link';
     }
   }
 
@@ -1311,8 +1320,8 @@
 
   $('sync-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    if ($('row-code').hidden) sendSignInEmail();
-    else verifySignInCode();
+    if (signInStep === 'email') sendSignInEmail();
+    else if (signInStep === 'code') verifySignInCode();
   });
 
   // Shared by the code and the link: keep the sign-in, find out who it is, then sync.

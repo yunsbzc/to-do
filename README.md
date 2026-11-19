@@ -14,19 +14,20 @@ Everything is saved in your browser. To sync between devices, connect a free Sup
    - **Site URL:** `https://yunsbzc.github.io/to-do/`
    - **Redirect URLs:** add `https://yunsbzc.github.io/to-do/`
 4. **Connect the app.** Open **Project Settings → API Keys** (or **API**). Copy the **Project URL** and the **publishable** key (called the **anon** key on older projects) into [`config.js`](config.js), then commit and push. Both are safe to publish: the rules in `supabase.sql` mean each person can only read and change their own lists.
-5. **Put a code in the sign-in email.** Open **Authentication → Emails** (called **Email Templates** on some dashboards) and choose **Magic Link**. Set the subject to `Your To Do sign-in code` and replace the body with:
-
-   ```html
-   <h2>Your sign-in code</h2>
-   <p style="font-size: 28px; letter-spacing: 4px;"><strong>{{ .Token }}</strong></p>
-   <p>Type this code into To Do, or <a href="{{ .ConfirmationURL }}">sign in on this device</a>.</p>
-   <p>If you didn't ask for this, you can ignore this email.</p>
-   ```
-
-   Save. (If the project still allows new sign-ups, make the same change to the **Confirm signup** template, which is what a brand-new email address receives.)
-6. **Sign in.** On the site, tap **Sign in to sync** at the bottom and enter your email. Type the code from the email into the app, or tap the link in it on that same device. The code works on any device, including the app added to your phone's home screen. Do the same on your other devices. Lists already on a device are merged in, not replaced.
+5. **Sign in.** On the site, tap **Sign in to sync** at the bottom, enter your email, then open the email on that same device and tap the link. Do the same on your other devices. Lists already on a device are merged in, not replaced.
 
 Optional: once all your devices are signed in, you can turn off **Authentication → Sign In / Providers → Allow new users to sign up**, so nobody else can create an account on your project.
+
+### Optional: sign in with a code instead of a link
+
+Email links always open in your browser, so they can't sign in the app if it's added to your phone's home screen. A 6-digit code works anywhere. The app already has a **Have a code?** box for it, but Supabase's built-in emails contain only the link: putting the code in needs a custom email template, and Supabase only allows editing templates once you connect your own email service (**Authentication → Emails → SMTP Settings**, for example with [Resend](https://resend.com)). Then edit the **Magic Link** template, set the subject to `Your To Do sign-in code`, and use:
+
+```html
+<h2>Your sign-in code</h2>
+<p style="font-size: 28px; letter-spacing: 4px;"><strong>{{ .Token }}</strong></p>
+<p>Type this code into To Do, or <a href="{{ .ConfirmationURL }}">sign in on this device</a>.</p>
+<p>If you didn't ask for this, you can ignore this email.</p>
+```
 
 ## How sync works
 

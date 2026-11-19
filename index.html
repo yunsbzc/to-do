@@ -98,6 +98,9 @@
     <form id="sync-form">
       <h2 id="sync-title">Sync your lists</h2>
       <p class="sheet-note" id="sync-note" aria-live="polite"></p>
+      <p class="sheet-aside" id="row-have-code" hidden>
+        <button type="button" class="text-button" id="sync-have-code">Have a code?</button>
+      </p>
       <label class="field" id="row-email">
         <span>Email</span>
         <input type="email" id="f-email" required autocomplete="email" inputmode="email" maxlength="254">
@@ -110,7 +113,7 @@
         <button type="button" class="text-button" id="sync-restart" hidden>Start over</button>
         <span class="spacer"></span>
         <button type="button" class="btn ghost" id="sync-cancel">Cancel</button>
-        <button type="submit" class="btn" id="sync-submit">Send email</button>
+        <button type="submit" class="btn" id="sync-submit">Send link</button>
       </div>
     </form>
   </dialog>
