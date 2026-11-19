@@ -1213,7 +1213,8 @@
   $('sync-signout').addEventListener('click', async () => {
     clearTimeout(syncTimer);
     try {
-      await request('/auth/v1/logout', { method: 'POST' });
+      // "local" ends only this device's sign-in; your other devices stay signed in.
+      await request('/auth/v1/logout?scope=local', { method: 'POST' });
     } catch {
       // Signing out on this device is what matters; the server session simply expires.
     }
@@ -1224,23 +1225,40 @@
 
   const syncSheet = $('sync-sheet');
 
+  // Two steps: send the email, then either type its code here or tap its link on this device.
+  let signInEmail = '';
+
+  function showSignInStep(step) {
+    const codeStep = step === 'code';
+    $('row-email').hidden = codeStep;
+    $('f-email').required = !codeStep;
+    $('row-code').hidden = !codeStep;
+    $('f-code').required = codeStep;
+    $('sync-restart').hidden = !codeStep;
+    const submit = $('sync-submit');
+    submit.disabled = false;
+    submit.textContent = codeStep ? 'Sign in' : 'Send email';
+    $('sync-note').textContent = codeStep
+      ? `We sent an email to ${signInEmail}. Type the code from it here, or tap its link on this device.`
+      : 'Enter your email and you’ll get a code to sign in with. Do the same on each of your devices.';
+    (codeStep ? $('f-code') : $('f-email')).focus();
+  }
+
   function openSyncSheet() {
     $('sync-form').reset();
-    $('sync-note').textContent =
-      'Enter your email and you’ll get a sign-in link. Open it on this device, then sign in the same way on your other devices.';
-    $('row-email').hidden = false;
-    $('sync-submit').hidden = false;
-    $('sync-submit').disabled = false;
-    $('sync-submit').textContent = 'Send link';
-    $('sync-cancel').textContent = 'Cancel';
     syncSheet.showModal();
-    $('f-email').focus();
+    showSignInStep('email');
   }
 
   $('sync-cancel').addEventListener('click', () => syncSheet.close());
 
-  $('sync-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
+  $('sync-restart').addEventListener('click', () => {
+    $('f-code').value = '';
+    showSignInStep('email');
+    $('f-email').value = signInEmail;
+  });
+
+  async function sendSignInEmail() {
     const email = $('f-email').value.trim();
     if (!email) return;
     const submit = $('sync-submit');
@@ -1253,17 +1271,66 @@
         auth: false,
         body: { email, create_user: true },
       });
-      $('sync-note').textContent = `A sign-in link is on its way to ${email}. Open it on this device to finish.`;
-      $('row-email').hidden = true;
-      submit.hidden = true;
-      $('sync-cancel').textContent = 'Done';
-      $('sync-cancel').focus();
+      signInEmail = email;
+      showSignInStep('code');
     } catch (error) {
-      $('sync-note').textContent = `Couldn’t send the link (${error instanceof TypeError ? 'no connection' : error.message}). Try again in a moment.`;
+      $('sync-note').textContent = `Couldn’t send the email (${error instanceof TypeError ? 'no connection' : error.message}). Try again in a moment.`;
       submit.disabled = false;
-      submit.textContent = 'Send link';
+      submit.textContent = 'Send email';
     }
+  }
+
+  async function verifySignInCode() {
+    const token = $('f-code').value.replace(/\s+/g, '');
+    if (!/^[0-9]{6,10}$/.test(token)) {
+      $('sync-note').textContent = 'Type the code from the email: just the digits.';
+      $('f-code').focus();
+      return;
+    }
+    const submit = $('sync-submit');
+    submit.disabled = true;
+    submit.textContent = 'Signing in…';
+    try {
+      const result = await request('/auth/v1/verify', {
+        method: 'POST',
+        auth: false,
+        body: { type: 'email', email: signInEmail, token },
+      });
+      syncSheet.close();
+      completeSignIn(result, result.user);
+    } catch (error) {
+      $('sync-note').textContent =
+        error instanceof TypeError
+          ? 'No connection. Try again in a moment.'
+          : 'That code didn’t work. Check it, or tap Start over to get a new one.';
+      submit.disabled = false;
+      submit.textContent = 'Sign in';
+      $('f-code').select();
+    }
+  }
+
+  $('sync-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if ($('row-code').hidden) sendSignInEmail();
+    else verifySignInCode();
   });
+
+  // Shared by the code and the link: keep the sign-in, find out who it is, then sync.
+  function completeSignIn(tokens, user) {
+    setSession(tokens, user ? { id: user.id, email: user.email } : null);
+    setSyncStatus('syncing');
+    if (session.user) {
+      sync();
+      return;
+    }
+    request('/auth/v1/user')
+      .then((found) => {
+        session.user = { id: found.id, email: found.email };
+        storeSession();
+        sync();
+      })
+      .catch((error) => setSyncStatus('error', error.message));
+  }
 
   // Coming back from the email link: the sign-in arrives in the address after "#".
   function finishSignIn() {
@@ -1271,19 +1338,11 @@
     const params = new URLSearchParams(location.hash.slice(1));
     const clean = () => history.replaceState(null, '', `${location.pathname}${location.search}#home`);
     if (params.get('access_token') && params.get('refresh_token')) {
-      setSession(
+      clean();
+      completeSignIn(
         { access_token: params.get('access_token'), refresh_token: params.get('refresh_token'), expires_in: params.get('expires_in') },
         null
       );
-      clean();
-      setSyncStatus('syncing');
-      request('/auth/v1/user')
-        .then((user) => {
-          session.user = { id: user.id, email: user.email };
-          storeSession();
-          sync();
-        })
-        .catch((error) => setSyncStatus('error', error.message));
     } else if (params.get('error_description') || params.get('error')) {
       clean();
       setSyncStatus('idle', `Sign-in didn’t work (${params.get('error_description') || params.get('error')}). Try sending a new link.`);

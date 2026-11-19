@@ -14,7 +14,17 @@ Everything is saved in your browser. To sync between devices, connect a free Sup
    - **Site URL:** `https://yunsbzc.github.io/to-do/`
    - **Redirect URLs:** add `https://yunsbzc.github.io/to-do/`
 4. **Connect the app.** Open **Project Settings → API Keys** (or **API**). Copy the **Project URL** and the **publishable** key (called the **anon** key on older projects) into [`config.js`](config.js), then commit and push. Both are safe to publish: the rules in `supabase.sql` mean each person can only read and change their own lists.
-5. **Sign in.** On the site, tap **Sign in to sync** at the bottom, enter your email and open the link it sends you on that same device. Do the same on your other devices. Lists already on a device are merged in, not replaced.
+5. **Put a code in the sign-in email.** Open **Authentication → Emails** (called **Email Templates** on some dashboards) and choose **Magic Link**. Set the subject to `Your To Do sign-in code` and replace the body with:
+
+   ```html
+   <h2>Your sign-in code</h2>
+   <p style="font-size: 28px; letter-spacing: 4px;"><strong>{{ .Token }}</strong></p>
+   <p>Type this code into To Do, or <a href="{{ .ConfirmationURL }}">sign in on this device</a>.</p>
+   <p>If you didn't ask for this, you can ignore this email.</p>
+   ```
+
+   Save. (If the project still allows new sign-ups, make the same change to the **Confirm signup** template, which is what a brand-new email address receives.)
+6. **Sign in.** On the site, tap **Sign in to sync** at the bottom and enter your email. Type the code from the email into the app, or tap the link in it on that same device. The code works on any device, including the app added to your phone's home screen. Do the same on your other devices. Lists already on a device are merged in, not replaced.
 
 Optional: once all your devices are signed in, you can turn off **Authentication → Sign In / Providers → Allow new users to sign up**, so nobody else can create an account on your project.
 
@@ -23,6 +33,6 @@ Optional: once all your devices are signed in, you can turn off **Authentication
 - Each device keeps working offline and saves locally first. It syncs when you open the app, when you come back to it, a moment after each change, and every minute while it's open.
 - Every to-do, list and countdown records when it was last changed. When two devices both changed things, the newest version of each one wins, so edits to different things never overwrite each other.
 - Deleted things leave a small marker, so a deletion on one device isn't undone by an older copy on another.
-- Signing out keeps your lists on that device; they just stop syncing.
+- Signing out affects only the device you sign out on. Your lists stay on it; they just stop syncing, and your other devices stay signed in.
 
-Supabase's built-in email service sends only a few sign-in emails per hour. That is plenty for personal use; if a link doesn't arrive, wait a little and try again.
+Supabase's built-in email service sends only a few sign-in emails per hour. That is plenty for personal use; if an email doesn't arrive, wait a little and try again.

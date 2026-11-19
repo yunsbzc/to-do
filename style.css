@@ -756,6 +756,12 @@ dialog h2 {
   border-color: var(--accent);
 }
 
+#f-code {
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3em;
+}
+
 .sheet-note {
   margin: 0 0 var(--space-4);
   color: var(--muted);
