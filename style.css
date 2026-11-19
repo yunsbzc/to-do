@@ -35,6 +35,7 @@
   --space-6: 40px;
   --space-7: 64px;
   --row: 60px;
+  --tabbar: 57px; /* tab bar height on narrow screens, not counting the home-indicator inset */
 
   color-scheme: light dark;
 }
@@ -80,6 +81,9 @@ button { cursor: pointer; }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* A page title focused by script (after its row disappeared) only marks the reading position. */
+h1[tabindex="-1"]:focus { outline: none; }
 
 .fab svg {
   fill: none;
@@ -777,6 +781,9 @@ dialog h2 {
 
 .sheet-aside { margin: calc(-1 * var(--space-3)) 0 var(--space-2); }
 
+/* New to-dos start with just a title and a list; the rest is one tap away. */
+.sheet-more { margin: calc(-1 * var(--space-2)) 0 0; }
+
 .sheet-actions {
   display: flex;
   align-items: center;
@@ -887,6 +894,44 @@ dialog h2 {
 
 .side-new-list { margin-top: var(--space-1); }
 
+/* ---------- tab bar (narrow screens; wide ones have the sidebar) ---------- */
+
+.tabbar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 16;
+  display: flex;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: 6px max(12px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.tabbar a {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  max-width: 160px;
+  min-height: 44px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 10px;
+  transition: background-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+  .tabbar a:hover { color: var(--ink); background: var(--hover); }
+}
+
+.tabbar a:active { background: var(--press); }
+
+/* Same treatment as the current page in the sidebar. */
+.tabbar a[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--field); }
+
 /* ---------- desktop: sidebar beside a wider content column ---------- */
 
 @media (min-width: 900px) {
@@ -908,21 +953,26 @@ dialog h2 {
 
   .page { width: 100%; max-width: 760px; padding: var(--space-7) 48px 96px; }
 
-  /* The sidebar replaces the + button, the "‹ Home" links and Home's own list of lists. */
-  .fab, .home-nav, a.back-home { display: none; }
+  /* The sidebar replaces the + button, the tab bar and the "‹ Lists" links. */
+  .fab, .tabbar, a.back-link { display: none; }
 
   .toast { left: calc(50% + 132px); }
 }
 
-/* ---------- fade behind the + button wherever it overlaps the text column ---------- */
-
 @media (max-width: 899px) {
+  .page { padding-bottom: calc(var(--tabbar) + 120px + env(safe-area-inset-bottom)); }
+
+  .fab { bottom: calc(var(--tabbar) + 16px + env(safe-area-inset-bottom)); }
+
+  .toast { bottom: calc(var(--tabbar) + 90px + env(safe-area-inset-bottom)); }
+
+  /* Fade the text column out behind the + button, just above the tab bar. */
   body::after {
     content: "";
     position: fixed;
-    inset: auto 0 0;
+    inset: auto 0 calc(var(--tabbar) + env(safe-area-inset-bottom));
     z-index: 14;
-    height: calc(104px + env(safe-area-inset-bottom));
+    height: 96px;
     background: linear-gradient(to bottom, transparent, var(--bg) 72%);
     pointer-events: none;
   }
@@ -931,15 +981,15 @@ dialog h2 {
 /* ---------- phones ---------- */
 
 @media (max-width: 640px) {
-  .page { padding: var(--space-5) 20px calc(120px + env(safe-area-inset-bottom)); }
+  .page { padding: var(--space-5) 20px calc(var(--tabbar) + 120px + env(safe-area-inset-bottom)); }
 
   .chips { margin-inline: -20px; padding-inline: 20px; }
 
   h1 { font-size: 2.75rem; }
 
-  .fab { right: 20px; bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .fab { right: 20px; }
 
-  .toast { bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .tabbar a { font-size: 0.8125rem; }
 
   dialog {
     width: 100%;

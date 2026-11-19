@@ -30,6 +30,13 @@
     </footer>
   </div>
 
+  <nav class="tabbar" id="tabbar" aria-label="Sections">
+    <a href="#home" data-tab="home">Home</a>
+    <a href="#lists" data-tab="lists">Lists</a>
+    <a href="#countdowns" data-tab="countdowns">Countdowns</a>
+    <a href="#done" data-tab="done">Done</a>
+  </nav>
+
   <button type="button" class="fab" id="add" aria-label="Add" title="Add (N)">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
   </button>
@@ -43,17 +50,21 @@
         <input type="text" id="f-title" required maxlength="200">
       </label>
 
-      <fieldset class="field-set">
-        <legend>Kind</legend>
+      <fieldset class="field-set" id="row-kind">
+        <legend id="kind-legend">Add to</legend>
         <div class="kind-chips" id="f-kind"></div>
       </fieldset>
+
+      <p class="sheet-more" id="row-more">
+        <button type="button" class="text-button" id="sheet-more">Add a note, due date or Next up</button>
+      </p>
 
       <label class="field" id="row-note">
         <span>Note <em>optional</em></span>
         <input type="text" id="f-note" maxlength="200" placeholder="An author, a link, who recommended it">
       </label>
 
-      <label class="field">
+      <label class="field" id="row-due">
         <span id="due-label">Due date <em>optional</em></span>
         <input type="date" id="f-due">
       </label>

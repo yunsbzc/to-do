@@ -177,9 +177,11 @@
 
   // ---------- helpers ----------
 
-  function el(tag, props = {}, ...children) {
+  // `focus` names a control so the same control can be focused again after a re-render (see render()).
+  function el(tag, { focus, ...props } = {}, ...children) {
     const node = document.createElement(tag);
     Object.assign(node, props);
+    if (focus) node.dataset.focus = focus;
     node.append(...children.filter((c) => c != null && c !== false));
     return node;
   }
@@ -314,10 +316,10 @@
 
   // The tappable text part of a row. A due tag sits inside it so narrow screens can drop it under the title;
   // it is also linked as the button's description so screen readers still hear it.
-  function openButton(label, title, sub, tag, onclick) {
+  function openButton(id, label, title, sub, tag, onclick) {
     const button = el(
       'button',
-      { type: 'button', className: 'open', ariaLabel: label, onclick },
+      { type: 'button', className: 'open', ariaLabel: label, onclick, focus: `open:${id}` },
       el('span', { className: 'title', textContent: title }),
       sub && el('span', { className: 'sub', textContent: sub }),
       tag
@@ -356,14 +358,16 @@
       disabled: pending,
       ariaLabel: `Mark ${item.title} as done`,
       onchange: () => completeItem(item, li, tick),
+      focus: `tick:${item.id}`,
     });
 
     li.append(
       el('label', { className: 'tick' }, tick),
-      openButton(`Edit ${item.title}`, item.title, sub, dueBadge(item), () => openSheet({ item })),
+      openButton(item.id, `Edit ${item.title}`, item.title, sub, dueBadge(item), () => openSheet({ item })),
       ...[showFlag && el('button', {
           type: 'button',
           className: 'flag',
+          focus: `flag:${item.id}`,
           innerHTML: FLAG_ICON,
           title: item.next ? 'Remove from Next up' : 'Add to Next up',
           ariaLabel: `Next up: ${item.title}`,
@@ -384,7 +388,7 @@
       { className: [days < 0 && 'past', c.id === justAdded && 'just-added'].filter(Boolean).join(' ') },
       el(
         'button',
-        { type: 'button', className: 'open', ariaLabel: `Edit ${c.name}`, onclick: () => openSheet({ countdown: c }) },
+        { type: 'button', className: 'open', ariaLabel: `Edit ${c.name}`, onclick: () => openSheet({ countdown: c }), focus: `open:${c.id}` },
         el('span', { className: 'title', textContent: c.name }),
         el('span', { className: 'sub', textContent: longDate(parseDate(c.date)) })
       ),
@@ -422,14 +426,15 @@
       {},
       el(
         'a',
-        { className: 'list-link', href },
+        { className: 'list-link', href, focus: `link:${href}` },
         el('span', { className: 'title', textContent: title }),
         el('span', { className: 'count', textContent: String(count) })
       )
     );
   }
 
-  const backHome = () => el('a', { className: 'eyebrow back-home', href: '#home', textContent: '‹ Home' });
+  // Only on narrow screens, where a list is one step below the Lists tab. Wide screens have the sidebar.
+  const backToLists = () => el('a', { className: 'eyebrow back-link', href: '#lists', textContent: '‹ Lists' });
 
   // ---------- views ----------
 
@@ -448,10 +453,10 @@
     const coming = [
       ...active
         .filter((i) => i.due && !i.next && i.state !== 'doing')
-        .map((i) => ({ days: daysUntil(i.due), title: i.title, sub: kindName(i.kind), open: () => openSheet({ item: i }) })),
+        .map((i) => ({ id: i.id, days: daysUntil(i.due), title: i.title, sub: kindName(i.kind), open: () => openSheet({ item: i }) })),
       ...state.countdowns
         .filter((c) => !nextEvent || c !== nextEvent.c)
-        .map((c) => ({ days: daysUntil(c.date), title: c.name, sub: 'Countdown', open: () => openSheet({ countdown: c }) }))
+        .map((c) => ({ id: c.id, days: daysUntil(c.date), title: c.name, sub: 'Countdown', open: () => openSheet({ countdown: c }) }))
         .filter((c) => c.days >= 0),
     ]
       .sort((a, b) => a.days - b.days)
@@ -502,36 +507,33 @@
         ...section(
           'Coming up',
           coming.map((c) =>
-            el('li', {}, openButton(`Edit ${c.title}`, c.title, c.sub, dueTag(c.days), c.open))
+            el('li', {}, openButton(c.id, `Edit ${c.title}`, c.title, c.sub, dueTag(c.days), c.open))
           )
         )
       );
     }
 
-    // On wide screens the sidebar shows these, so Home hides them there.
-    nodes.push(
+    return nodes;
+  }
+
+  // Every list in one place. Wide screens show these in the sidebar; narrow ones reach this from the tab bar.
+  function listsView() {
+    const active = state.items.filter((i) => i.state !== 'done');
+    return [
+      head(null, 'Lists', active.length ? `${active.length} to do` : ''),
+      el(
+        'ul',
+        { className: 'rows' },
+        ...state.kinds.map((k) =>
+          linkRow(`#list/${encodeURIComponent(k.id)}`, k.name, active.filter((i) => i.kind === k.id).length)
+        )
+      ),
       el(
         'div',
-        { className: 'home-nav' },
-        ...section(
-          'Lists',
-          state.kinds.map((k) =>
-            linkRow(`#list/${encodeURIComponent(k.id)}`, k.name, active.filter((i) => i.kind === k.id).length)
-          )
-        ),
-        el(
-          'div',
-          { className: 'view-actions' },
-          el('button', { type: 'button', className: 'text-button', textContent: 'New list', onclick: () => openListSheet() })
-        ),
-        ...section('More', [
-          linkRow('#countdowns', 'Countdowns', state.countdowns.filter((c) => daysUntil(c.date) >= 0).length),
-          linkRow('#done', 'Done', state.items.length - active.length),
-        ])
-      )
-    );
-
-    return nodes;
+        { className: 'view-actions' },
+        el('button', { type: 'button', className: 'text-button', textContent: 'New list', onclick: () => openListSheet(), focus: 'btn:new-list' })
+      ),
+    ];
   }
 
   function listView(kind) {
@@ -540,7 +542,7 @@
     const open = items.filter((i) => i.state === 'open');
     const row = (i) => itemRow(i, { showFlag: true });
 
-    const nodes = [head(backHome(), kind.name, items.length ? `${items.length} to do` : '')];
+    const nodes = [head(backToLists(), kind.name, items.length ? `${items.length} to do` : '')];
 
     if (!items.length) {
       nodes.push(emptyState('Nothing here. Press + to add something.'));
@@ -555,12 +557,13 @@
       el(
         'div',
         { className: 'view-actions' },
-        el('button', { type: 'button', className: 'text-button', textContent: 'Rename list', onclick: () => openListSheet(kind) }),
+        el('button', { type: 'button', className: 'text-button', textContent: 'Rename list', onclick: () => openListSheet(kind), focus: 'btn:rename-list' }),
         !DEFAULT_KINDS.some((k) => k.id === kind.id) &&
           el('button', {
             type: 'button',
             className: 'text-button',
             textContent: 'Delete this list',
+            focus: 'btn:delete-list',
             onclick: async () => {
               const inList = state.items.filter((i) => i.kind === kind.id);
               const open = inList.filter((i) => i.state !== 'done').length;
@@ -576,7 +579,7 @@
                 state.kinds = state.kinds.filter((k) => k.id !== kind.id);
                 state.items = state.items.filter((i) => i.kind !== kind.id);
               });
-              location.hash = '#home';
+              location.hash = '#lists';
             },
           })
       )
@@ -633,7 +636,7 @@
   function hero(c, days) {
     const event = el(
       'button',
-      { type: 'button', className: 'hero-event', ariaLabel: `Edit ${c.name}`, onclick: () => openSheet({ countdown: c }) },
+      { type: 'button', className: 'hero-event', ariaLabel: `Edit ${c.name}`, onclick: () => openSheet({ countdown: c }), focus: `open:${c.id}` },
       el('span', { className: 'hero-name', textContent: c.name }),
       el('span', { className: 'hero-date', textContent: days === 0 ? 'It’s here.' : longDate(parseDate(c.date)) })
     );
@@ -669,6 +672,7 @@
         type: 'button',
         className: 'hero-count',
         title: 'Count it another way',
+        focus: 'hero-count',
         onclick: () => {
           countMode = nextMode(days);
           const next = countAs(countMode, c, days);
@@ -703,7 +707,7 @@
     const [first, ...later] = upcoming;
 
     if (!first) {
-      const nodes = [head(backHome(), 'Countdowns', '')];
+      const nodes = [head(null, 'Countdowns', '')];
       if (!all.length) nodes.push(emptyState('Nothing to look forward to yet. Press + to add a date.'));
       if (past.length) nodes.push(...section('Past', past.map((i) => countdownRow(i.c, i.days))));
       return nodes;
@@ -711,7 +715,7 @@
 
     // The soonest event gets the page; the page title is kept for screen readers.
     const nodes = [
-      el('header', { className: 'view-head' }, backHome(), el('h1', { className: 'sr-only', textContent: 'Countdowns' })),
+      el('header', { className: 'view-head' }, el('h1', { className: 'sr-only', textContent: 'Countdowns' })),
       hero(first.c, first.days),
     ];
     if (later.length) nodes.push(...section('Later', later.map((i) => countdownRow(i.c, i.days))));
@@ -725,7 +729,7 @@
     if (doneFilter !== 'all' && !kinds.some((k) => k.id === doneFilter)) doneFilter = 'all';
     const shown = doneFilter === 'all' ? allDone : allDone.filter((i) => i.kind === doneFilter);
 
-    const nodes = [head(backHome(), 'Done', allDone.length ? `${allDone.length} finished` : '')];
+    const nodes = [head(null, 'Done', allDone.length ? `${allDone.length} finished` : '')];
 
     if (!allDone.length) {
       nodes.push(emptyState('Nothing finished yet. It will be recorded here.'));
@@ -739,6 +743,7 @@
           className: 'chip',
           textContent: label,
           ariaPressed: String(doneFilter === id),
+          focus: `chip:${id}`,
           onclick: () => {
             doneFilter = id;
             render();
@@ -769,6 +774,7 @@
                   type: 'checkbox',
                   checked: true,
                   ariaLabel: `Mark ${item.title} as not done`,
+                  focus: `tick:${item.id}`,
                   onchange: () =>
                     changeWithUndo(`${quote(item.title)} moved back to ${kindName(item.kind)}`, () => {
                       item.state = 'open';
@@ -778,7 +784,7 @@
               ),
               el(
                 'button',
-                { type: 'button', className: 'open', ariaLabel: `Edit ${item.title}`, onclick: () => openSheet({ item }) },
+                { type: 'button', className: 'open', ariaLabel: `Edit ${item.title}`, onclick: () => openSheet({ item }), focus: `open:${item.id}` },
                 el('span', { className: 'title', textContent: item.title }),
                 el('span', {
                   className: 'sub',
@@ -802,7 +808,7 @@
 
   function currentRoute() {
     const hash = location.hash.slice(1);
-    if (hash === 'countdowns' || hash === 'done') return { name: hash };
+    if (hash === 'lists' || hash === 'countdowns' || hash === 'done') return { name: hash };
     if (hash.startsWith('list/')) {
       let id = hash.slice(5);
       try {
@@ -828,7 +834,7 @@
         {},
         el(
           'a',
-          { className: 'side-link', href, ariaCurrent: current ? 'page' : null },
+          { className: 'side-link', href, ariaCurrent: current ? 'page' : null, focus: `side:${href}` },
           el('span', { className: 'side-name', textContent: name }),
           count !== null && el('span', { className: 'side-count', textContent: String(count) })
         )
@@ -836,7 +842,7 @@
 
     $('sidebar').replaceChildren(
       el('p', { className: 'side-app', textContent: 'To Do' }),
-      el('button', { type: 'button', className: 'btn side-add', textContent: 'New to-do', title: 'New to-do (N)', onclick: () => openAdd() }),
+      el('button', { type: 'button', className: 'btn side-add', textContent: 'New to-do', title: 'New to-do (N)', onclick: () => openAdd(), focus: 'side:add' }),
       el(
         'nav',
         { ariaLabel: 'Main' },
@@ -854,7 +860,7 @@
             )
           )
         ),
-        el('button', { type: 'button', className: 'text-button side-new-list', textContent: 'New list', onclick: () => openListSheet() }),
+        el('button', { type: 'button', className: 'text-button side-new-list', textContent: 'New list', onclick: () => openListSheet(), focus: 'side:new-list' }),
         el('h2', { className: 'group', textContent: 'More' }),
         el(
           'ul',
@@ -866,12 +872,73 @@
     );
   }
 
+  // ---------- keeping keyboard focus across re-renders ----------
+
+  // Each render rebuilds the page, which would drop keyboard focus to the top of the document. Controls carry a
+  // data-focus name, so render() can focus the same control in the new page, or the nearest one of its kind
+  // when it is gone (a to-do that was just ticked off moves focus to the next tick).
+  let lastFocused = null;
+  document.addEventListener('focusin', (e) => {
+    if (e.target instanceof Element && e.target.dataset.focus) lastFocused = e.target;
+  });
+
+  function focusToKeep() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.dataset.focus) return active;
+    // A tick disables itself while it animates, which drops focus to the page: carry on from where it was.
+    const dropped = !active || active === document.body;
+    if (dropped && lastFocused && (!lastFocused.isConnected || lastFocused.disabled)) return lastFocused;
+    return null;
+  }
+
+  // "tick:abc123" -> "tick": controls of the same kind can stand in for each other.
+  const focusKind = (key) => key.split(':')[0];
+  const controlsOfKind = (kind) => [...document.querySelectorAll('[data-focus]')].filter((n) => focusKind(n.dataset.focus) === kind);
+
+  // Remembers which control had focus, and where it sat among controls of its kind.
+  function focusSpot() {
+    const from = focusToKeep();
+    if (!from) return null;
+    const key = from.dataset.focus;
+    return { key, kind: focusKind(key), ordinal: Math.max(0, controlsOfKind(focusKind(key)).indexOf(from)) };
+  }
+
+  function restoreFocus({ key, kind, ordinal }, routeChanged) {
+    let target = [...document.querySelectorAll('[data-focus]')].find((n) => n.dataset.focus === key && !n.disabled);
+    if (!target && !routeChanged) {
+      const now = controlsOfKind(kind).filter((n) => !n.disabled);
+      target = now[Math.min(ordinal, now.length - 1)];
+    }
+    if (!target) {
+      // A different page, or nothing of the same kind left: start from the page title.
+      target = document.querySelector('#view h1');
+      if (target) target.tabIndex = -1;
+    }
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  let renderedRoute = '';
+
   function render() {
     renderedDay = startOfToday().toDateString();
     const route = currentRoute();
+    const routeId = route.name === 'list' ? `list:${route.kind.id}` : route.name;
+    const routeChanged = routeId !== renderedRoute;
+    renderedRoute = routeId;
+
+    const keep = focusSpot();
+    lastFocused = null; // used at most once; focusing the restored control sets it again
+
     renderSidebar(route);
+    const tab = route.name === 'list' ? 'lists' : route.name;
+    for (const link of $('tabbar').querySelectorAll('a')) {
+      if (link.dataset.tab === tab) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+
     const views = {
       home: () => ['To Do', homeView()],
+      lists: () => ['Lists · To Do', listsView()],
       list: () => [`${route.kind.name} · To Do`, listView(route.kind)],
       countdowns: () => ['Countdowns · To Do', countdownsView()],
       done: () => ['Done · To Do', doneView()],
@@ -879,6 +946,8 @@
     const [title, nodes] = views[route.name]();
     document.title = title;
     $('view').replaceChildren(...nodes);
+
+    if (keep && !document.querySelector('dialog[open]')) restoreFocus(keep, routeChanged);
   }
 
   window.addEventListener('hashchange', () => {
@@ -910,12 +979,22 @@
     return checked ? checked.value : 'do';
   }
 
+  // A new to-do starts with just a title and a list; "Add a note, due date or Next up" shows the rest.
+  // Editing shows everything, and a countdown always shows its date because it needs one.
+  let showDetails = false;
+
   function syncSheetMode() {
     const isCountdown = currentKind() === COUNTDOWN;
     const editingItem = !!(editing && editing.item);
-    $('row-note').hidden = isCountdown;
-    $('row-next').hidden = isCountdown;
+    const details = !!editing || showDetails;
+    $('row-kind').hidden = !!(editing && editing.countdown);
+    $('kind-legend').textContent = editing ? 'List' : 'Add to';
+    $('row-more').hidden = isCountdown || details;
+    $('row-note').hidden = isCountdown || !details;
+    $('row-due').hidden = !isCountdown && !details;
+    $('row-next').hidden = isCountdown || !details;
     $('row-state').hidden = !editingItem;
+    $('f-title').placeholder = isCountdown ? 'What are you counting down to?' : 'What needs doing?';
     $('f-due').required = isCountdown;
     $('due-label').innerHTML = isCountdown ? 'Date' : 'Due date <em>optional</em>';
     $('sheet-title').textContent = editing
@@ -929,12 +1008,13 @@
 
   function openSheet({ item = null, countdown = null, kind = 'do' } = {}) {
     editing = item ? { item } : countdown ? { countdown } : null;
+    showDetails = false;
 
     $('sheet-form').reset();
 
     // Kind chips. A countdown can't become a to-do (or back), so they are locked when editing one.
     const selected = item ? item.kind : countdown ? COUNTDOWN : kind;
-    const options = [...state.kinds.map((k) => [k.id, k.name]), ...(item ? [] : [[COUNTDOWN, 'Countdown']])];
+    const options = [...state.kinds.map((k) => [k.id, k.name]), ...(item ? [] : [[COUNTDOWN, 'Countdowns']])];
     $('f-kind').replaceChildren(
       ...options.map(([value, label]) =>
         el(
@@ -959,7 +1039,17 @@
     else $('f-title').focus();
   }
 
-  $('f-kind').addEventListener('change', syncSheetMode);
+  $('f-kind').addEventListener('change', () => {
+    // A date typed for a countdown carries over as the due date, so keep it in view rather than hide it.
+    if (currentKind() !== COUNTDOWN && $('f-due').value) showDetails = true;
+    syncSheetMode();
+  });
+
+  $('sheet-more').addEventListener('click', () => {
+    showDetails = true;
+    syncSheetMode();
+    $('f-note').focus();
+  });
   $('sheet-cancel').addEventListener('click', () => sheet.close());
 
   for (const dialog of document.querySelectorAll('dialog')) {
